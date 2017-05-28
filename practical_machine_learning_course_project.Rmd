@@ -1,0 +1,165 @@
+---
+title: Predictive Analytics On Data To Predict Who Is Performing Excercise Based On Data Of Excercise Activity
+author: "Soham Lawar"
+date: "28 May 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Problem Statement
+
+Using devices such as **Jawbone Up**, **Nike FuelBand**, and **Fitbit** it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here:<http://groupware.les.inf.puc-rio.br/har>.
+
+
+## Downloading And Loading Data
+
+```{r data_loading}
+if(!file.exists("pml-training.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")}
+
+if(!file.exists("pml-testing.csv")){download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")}
+
+
+#Read the training data and replace empty values by NA
+trainingDataSet<- read.csv("pml-training.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testingDataSet<- read.csv("pml-testing.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+dim(trainingDataSet)
+
+```
+## Data Preprocessing
+Columns having NA values are not considered for analysis.
+```{r preprocessing_1}
+trainingDataSet <- trainingDataSet[,(colSums(is.na(trainingDataSet)) == 0)]
+dim(trainingDataSet)
+testingDataSet <- testingDataSet[,(colSums(is.na(testingDataSet)) == 0)]
+dim(testingDataSet)
+```
+Columns containing numerical values in training and testing data set are normalized.
+```{r preprocessing_2}
+numericalsIdx <- which(lapply(trainingDataSet, class) %in% "numeric")
+
+library(caret)
+preprocessModel <-preProcess(trainingDataSet[,numericalsIdx],method=c('knnImpute', 'center', 'scale'))
+pre_trainingDataSet <- predict(preprocessModel, trainingDataSet[,numericalsIdx])
+pre_trainingDataSet$classe <- trainingDataSet$classe
+pre_testingDataSet <-predict(preprocessModel,testingDataSet[,numericalsIdx])
+
+```
+Columns having near zero variance are deleted.
+```{r preprocessing_3}
+library(caret)
+nzv <- nearZeroVar(pre_trainingDataSet,saveMetrics=TRUE)
+pre_trainingDataSet <- pre_trainingDataSet[,nzv$nzv==FALSE]
+
+nzv <- nearZeroVar(pre_testingDataSet,saveMetrics=TRUE)
+pre_testingDataSet <- pre_testingDataSet[,nzv$nzv==FALSE]
+
+```
+Validation data set is created for testing accuracy of the model.
+```{r preprocessing_4}
+set.seed(1234)
+idxTrain<- createDataPartition(pre_trainingDataSet$classe, p=3/4, list=FALSE)
+training<- pre_trainingDataSet[idxTrain, ]
+validation <- pre_trainingDataSet[-idxTrain, ]
+dim(training) 
+dim(validation)
+```
+## Model Building
+1) Decision Tree Model
+
+```{r model_1}
+library(tree)
+
+tree <- tree(classe~.,training)
+plot(tree)
+text(tree,pretty = 0)
+tree.pred <- predict(tree,validation,type = "class")
+
+confus <- confusionMatrix(validation$classe, tree.pred)
+confus
+```
+
+Accuracy for decision tree model is low.
+
+2) Prune Decision Tree To avoid over fitting. 
+
+```{r model_2}
+cv.tree <- cv.tree(tree,FUN = prune.misclass)
+cv.tree
+par(mfrow=c(1,2))
+plot(cv.tree$size,cv.tree$dev,type = "b")
+plot(cv.tree$k,cv.tree$dev, type = "b")
+
+```
+
+Since deviance for 18 and 19 nodes is equal and lowest ,prunning a tree would not make large difference in accuracy.
+
+3) Bagging 
+
+Bagging is a special case of random forest in which all the variables are considered as a predictors for building all decision trees.
+
+```{r model_3}
+library(randomForest)
+set.seed(1)
+bagging <- randomForest(classe~.,training,mtry = 28,importance=TRUE) 
+bagging
+
+bag.pred <- predict(bagging,validation,type = "class")
+
+confus <- confusionMatrix(validation$classe, bag.pred)
+confus
+
+```
+
+Bagging has improved accuracy.
+
+4) Random Forest(Number of predictors = 0.5 * number of variables)
+
+```{r model_4}
+rf <- randomForest(classe~.,training,mtry = 14,importance=TRUE) 
+rf
+
+rf.pred <- predict(rf,validation,type = "class")
+
+confus <- confusionMatrix(validation$classe, rf.pred)
+confus
+```
+
+5) Random Forest(Number of predictors = square root of number of variables)
+
+```{r model_5}
+rf_2 <- randomForest(classe~.,training,mtry = 5,importance=TRUE) 
+rf_2
+
+rf_2.pred <- predict(rf_2,validation,type = "class")
+
+confus <- confusionMatrix(validation$classe, rf_2.pred)
+confus
+
+```
+
+6) Random Forest with default number of predictors
+
+```{r model_6}
+rf_default <- randomForest(classe~.,training) 
+rf_default
+
+rf_default.pred <- predict(rf_default,validation,type = "class")
+
+confus <- confusionMatrix(validation$classe, rf_default.pred)
+confus
+ 
+```
+
+In all of the above models rf_2(Random Forest with Number of predictors = square root of number of variables) has better accurcy.
+
+## Prediction on test data
+
+```{r testing}
+pred_final <- predict(rf_2,pre_testingDataSet)
+pred_final
+```
+
+
